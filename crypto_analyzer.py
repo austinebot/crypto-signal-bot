@@ -3,12 +3,26 @@ import statistics
 import os
 from datetime import datetime
 
-def fetch_candles(symbol, interval="15m", limit=250):
+def fetch_candles(symbol, interval="15m", limit=200):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    data = requests.get(url).json()
-    return [{'open': float(c[1]), 'high': float(c[2]), 'low': float(c[3]), 'close': float(c[4])} for c in data]
+    resp = requests.get(url)
+    resp.raise_for_status()
+    raw = resp.json()
+    candles = []
+    for c in raw:
+        try:
+            candles.append({
+                'open': float(c[1]),
+                'high': float(c[2]),
+                'low': float(c[3]),
+                'close': float(c[4])
+            })
+        except:
+            continue
+    return candles
 
 def ema(values, period):
+    if len(values) < period: return values
     k = 2 / (period + 1)
     out = [values[0]]
     for v in values[1:]:
@@ -16,17 +30,19 @@ def ema(values, period):
     return out
 
 def rsi(closes, period=14):
+    if len(closes) < period + 1: return 50.0
     gains, losses = [], []
     for i in range(1, len(closes)):
         delta = closes[i] - closes[i-1]
         gains.append(max(delta, 0))
         losses.append(max(-delta, 0))
-    avg_gain = statistics.mean(gains[-period:]) if len(gains) >= period else 0
-    avg_loss = statistics.mean(losses[-period:]) if len(losses) >= period else 0
+    avg_gain = statistics.mean(gains[-period:]) if gains else 0
+    avg_loss = statistics.mean(losses[-period:]) if losses else 0
     if avg_loss == 0: return 100.0
     return 100 - 100 / (1 + avg_gain / avg_loss)
 
 def compute_adx(candles, period=14):
+    if len(candles) < period + 1: return 20.0
     trs, plus_dm, minus_dm = [], [], []
     for i in range(1, len(candles)):
         c, p = candles[i], candles[i-1]
@@ -36,7 +52,6 @@ def compute_adx(candles, period=14):
         plus_dm.append(up if up > down and up > 0 else 0)
         minus_dm.append(down if down > up and down > 0 else 0)
         trs.append(tr)
-    if not trs: return 0
     atr = statistics.mean(trs[-period:])
     plus_di = statistics.mean(plus_dm[-period:]) / atr * 100 if atr > 0 else 0
     minus_di = statistics.mean(minus_dm[-period:]) / atr * 100 if atr > 0 else 0
@@ -44,6 +59,7 @@ def compute_adx(candles, period=14):
     return dx
 
 def compute_macd(closes):
+    if len(closes) < 35: return 0, 0
     ema12 = ema(closes, 12)
     ema26 = ema(closes, 26)
     macd = [a - b for a, b in zip(ema12, ema26)]
@@ -52,14 +68,14 @@ def compute_macd(closes):
     return hist[-1], hist[-2]
 
 def find_s_r(candles):
+    if not candles: return 0, 0
     price = candles[-1]['close']
-    pivot_highs = [c['high'] for c in candles[-80:] if c['high'] == max([c['high'] for c in candles[-80:]])]
-    pivot_lows = [c['low'] for c in candles[-80:] if c['low'] == min([c['low'] for c in candles[-80:]])]
-    support = max([p for p in set(pivot_lows) if p < price] or [price * 0.98])
-    resistance = min([p for p in set(pivot_highs) if p > price] or [price * 1.02])
+    support = min(c['low'] for c in candles[-60:])
+    resistance = max(c['high'] for c in candles[-60:])
     return support, resistance
 
 def detect_pattern(candles):
+    if len(candles) < 40: return "Pas de pattern clair"
     highs = [c['high'] for c in candles[-60:]]
     lows = [c['low'] for c in candles[-60:]]
     if max(highs[-30:]) > max(highs[:-30]) * 0.995 and max(highs[-15:]) > max(highs[:-15]) * 0.995:
@@ -70,14 +86,13 @@ def detect_pattern(candles):
 
 def build_analysis(symbol):
     candles15 = fetch_candles(symbol)
-    candles1h = fetch_candles(symbol, "1h", 120)
+    if not candles15:
+        return {"symbol": symbol, "signal": "WAIT", "error": "No data"}
 
     closes15 = [c['close'] for c in candles15]
     price = closes15[-1]
 
     trend15 = "haussière" if ema(closes15,20)[-1] > ema(closes15,50)[-1] and price > ema(closes15,20)[-1] else "baissière" if ema(closes15,20)[-1] < ema(closes15,50)[-1] and price < ema(closes15,20)[-1] else "indécise"
-    trend1h = "haussière" if ema([c['close'] for c in candles1h],20)[-1] > ema([c['close'] for c in candles1h],50)[-1] else "baissière" if ema([c['close'] for c in candles1h],20)[-1] < ema([c['close'] for c in candles1h],50)[-1] else "indécise"
-
     rsi_val = rsi(closes15)
     adx = compute_adx(candles15)
     macd_hist, macd_prev = compute_macd(closes15)
@@ -88,14 +103,14 @@ def build_analysis(symbol):
     confidence = 55
     reasons = [f"Pattern: {pattern}"]
 
-    if trend15 == "haussière" and trend1h in ["haussière", "indécise"] and rsi_val < 68 and adx > 23 and macd_hist > macd_prev:
+    if trend15 == "haussière" and rsi_val < 68 and adx > 23 and macd_hist > macd_prev:
         signal = "BUY"
         confidence += 45
-        reasons.append("Alignement haussier 15m/1h + momentum")
-    elif trend15 == "baissière" and trend1h in ["baissière", "indécise"] and rsi_val > 32 and adx > 23 and macd_hist < macd_prev:
+        reasons.append("Alignement haussier + momentum")
+    elif trend15 == "baissière" and rsi_val > 32 and adx > 23 and macd_hist < macd_prev:
         signal = "SELL"
         confidence += 45
-        reasons.append("Alignement baissier 15m/1h + momentum")
+        reasons.append("Alignement baissier + momentum")
 
     if "Double Bottom" in pattern or "Double Top" in pattern:
         confidence += 12
@@ -127,8 +142,8 @@ def build_analysis(symbol):
         "time": datetime.utcnow().strftime("%H:%M UTC")
     }
 
-# CONFIGURATION
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TONUSDT"]
+# === MARCHÉS (ajoutés sans ralentir) ===
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TONUSDT", "AVAXUSDT", "DOGEUSDT", "SUIUSDT"]
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
