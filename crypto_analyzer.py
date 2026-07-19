@@ -5,13 +5,13 @@ import time
 from datetime import datetime
 
 headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 }
 
-def fetch_candles(symbol, interval="15m", limit=150):
+def fetch_candles(symbol, interval="15m", limit=100):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        time.sleep(1.5)  # Délai plus important
+        time.sleep(3)  # Délai important
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         raw = resp.json()
@@ -31,7 +31,7 @@ def fetch_candles(symbol, interval="15m", limit=150):
         print(f"API error for {symbol}: {e}")
         return []
 
-# (Le reste du code reste identique)
+# (Le reste du code est identique à la version précédente)
 
 def build_analysis(symbol):
     candles15 = fetch_candles(symbol)
@@ -92,7 +92,7 @@ def build_analysis(symbol):
     }
 
 # CONFIGURATION
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TONUSDT"]
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -117,6 +117,6 @@ if __name__ == "__main__":
             res = build_analysis(symbol)
             print(res)
             send_telegram(res)
-            time.sleep(3)  # Délai plus long
+            time.sleep(4)  # Délai plus long
         except Exception as e:
             print(f"Erreur {symbol}: {e}")
