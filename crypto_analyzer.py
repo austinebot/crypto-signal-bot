@@ -26,10 +26,71 @@ def fetch_candles(symbol, interval="15m", limit=200):
         print(f"API error for {symbol}: {e}")
         return []
 
-# Le reste du code reste identique (ema, rsi, etc.)
+def ema(values, period):
+    if len(values) < period: return values
+    k = 2 / (period + 1)
+    out = [values[0]]
+    for v in values[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+def rsi(closes, period=14):
+    if len(closes) < period + 1: return 50.0
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        delta = closes[i] - closes[i-1]
+        gains.append(max(delta, 0))
+        losses.append(max(-delta, 0))
+    avg_gain = statistics.mean(gains[-period:]) if gains else 0
+    avg_loss = statistics.mean(losses[-period:]) if losses else 0
+    if avg_loss == 0: return 100.0
+    return 100 - 100 / (1 + avg_gain / avg_loss)
+
+def compute_adx(candles, period=14):
+    if len(candles) < period + 1: return 20.0
+    trs, plus_dm, minus_dm = [], [], []
+    for i in range(1, len(candles)):
+        c, p = candles[i], candles[i-1]
+        tr = max(c['high']-c['low'], abs(c['high']-p['close']), abs(c['low']-p['close']))
+        up = c['high'] - p['high']
+        down = p['low'] - c['low']
+        plus_dm.append(up if up > down and up > 0 else 0)
+        minus_dm.append(down if down > up and down > 0 else 0)
+        trs.append(tr)
+    atr = statistics.mean(trs[-period:])
+    plus_di = statistics.mean(plus_dm[-period:]) / atr * 100 if atr > 0 else 0
+    minus_di = statistics.mean(minus_dm[-period:]) / atr * 100 if atr > 0 else 0
+    dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100 if (plus_di + minus_di) > 0 else 0
+    return dx
+
+def compute_macd(closes):
+    if len(closes) < 35: return 0, 0
+    ema12 = ema(closes, 12)
+    ema26 = ema(closes, 26)
+    macd = [a - b for a, b in zip(ema12, ema26)]
+    signal = ema(macd, 9)
+    hist = [m - s for m, s in zip(macd, signal)]
+    return hist[-1], hist[-2]
+
+def find_s_r(candles):
+    if not candles: return 0, 0
+    price = candles[-1]['close']
+    support = min(c['low'] for c in candles[-60:])
+    resistance = max(c['high'] for c in candles[-60:])
+    return support, resistance
+
+def detect_pattern(candles):
+    if len(candles) < 40: return "Pas de pattern clair"
+    highs = [c['high'] for c in candles[-60:]]
+    lows = [c['low'] for c in candles[-60:]]
+    if max(highs[-30:]) > max(highs[:-30]) * 0.995 and max(highs[-15:]) > max(highs[:-15]) * 0.995:
+        return "Double Top (baissier)"
+    if min(lows[-30:]) < min(lows[:-30]) * 1.005 and min(lows[-15:]) < min(lows[:-15]) * 1.005:
+        return "Double Bottom (haussier)"
+    return "Pas de pattern clair"
 
 def build_analysis(symbol):
-    time.sleep(1)  # Délai important pour éviter le rate limit
+    time.sleep(1)
     candles15 = fetch_candles(symbol)
     if not candles15:
         return {"symbol": symbol, "signal": "WAIT", "error": "No data"}
@@ -87,11 +148,25 @@ def build_analysis(symbol):
         "time": datetime.utcnow().strftime("%H:%M UTC")
     }
 
-# === Le reste du code (functions ema, rsi, etc. + main) reste identique ===
+# CONFIGURATION
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TONUSDT", "AVAXUSDT", "DOGEUSDT"]
 
-# Copie le reste du code de ma précédente réponse (les fonctions ema, rsi, compute_adx, etc. + la partie CONFIG et send_telegram)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ... (colle ici le reste du code que je t'ai donné avant)
+def send_telegram(result):
+    if result["signal"] == "WAIT":
+        return
+    msg = f"""🚨 <b>{result['signal']}</b> — {result['confidence']}% 
+
+{result['symbol']} @ {result['price']}
+Pattern : {result['pattern']}
+T15m : {result['trend15']}
+RSI : {result['rsi']} | ADX : {result['adx']}
+Support : {result['support']} | Rés : {result['resistance']}
+R:R ≈ 1:{result['rr']}
+"""
+    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
 if __name__ == "__main__":
     for symbol in SYMBOLS:
