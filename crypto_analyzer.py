@@ -11,7 +11,7 @@ headers = {
 def fetch_candles(symbol, interval="15m", limit=150):
     url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        time.sleep(2)
+        time.sleep(1.8)
         resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
         raw = resp.json()
@@ -80,8 +80,8 @@ def compute_macd(closes):
 def find_s_r(candles):
     if not candles: return 0, 0
     price = candles[-1]['close']
-    support = min(c['low'] for c in candles[-60:])
-    resistance = max(c['high'] for c in candles[-60:])
+    support = min(c['low'] for c in candles[-80:])
+    resistance = max(c['high'] for c in candles[-80:])
     return support, resistance
 
 def detect_pattern(candles):
@@ -113,28 +113,30 @@ def build_analysis(symbol):
     confidence = 55
     reasons = [f"Pattern: {pattern}"]
 
-    if trend15 == "haussière" and rsi_val < 68 and adx > 23 and macd_hist > macd_prev:
+    if trend15 == "haussière" and rsi_val < 68 and adx > 25 and macd_hist > macd_prev:
         signal = "BUY"
         confidence += 45
-        reasons.append("Alignement haussier + momentum")
-    elif trend15 == "baissière" and rsi_val > 32 and adx > 23 and macd_hist < macd_prev:
+        reasons.append("Alignement haussier fort")
+    elif trend15 == "baissière" and rsi_val > 32 and adx > 25 and macd_hist < macd_prev:
         signal = "SELL"
         confidence += 45
-        reasons.append("Alignement baissier + momentum")
+        reasons.append("Alignement baissier fort")
 
-    if "Double Bottom" in pattern or "Double Top" in pattern:
-        confidence += 12
+    if "Double Bottom" in pattern:
+        confidence += 18
+    if "Double Top" in pattern:
+        confidence += 18
 
     if signal != "WAIT":
         sl = support * 0.996 if signal == "BUY" else resistance * 1.004
         tp = resistance if signal == "BUY" else support
         rr = abs(tp - price) / abs(price - sl) if abs(price - sl) > 0 else 0
-        if rr < 2.3:
+        if rr < 2.5:
             signal = "WAIT"
         else:
-            confidence += 10
+            confidence += 12
 
-    if adx < 20 or confidence < 72:
+    if adx < 22 or confidence < 73:
         signal = "WAIT"
 
     return {
@@ -152,8 +154,8 @@ def build_analysis(symbol):
         "time": datetime.utcnow().strftime("%H:%M UTC")
     }
 
-# CONFIGURATION
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+# === PLUS DE MARCHÉS ===
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "TONUSDT", "AVAXUSDT", "DOGEUSDT", "SUIUSDT", "ADAUSDT", "BNBUSDT"]
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -178,6 +180,6 @@ if __name__ == "__main__":
             res = build_analysis(symbol)
             print(res)
             send_telegram(res)
-            time.sleep(3)
+            time.sleep(2.5)
         except Exception as e:
             print(f"Erreur {symbol}: {e}")
